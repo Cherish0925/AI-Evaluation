@@ -1,9 +1,13 @@
 import copy
+import json
 import math
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from ai_eval.analysis import compare, pass_at_k, summarize
+from ai_eval.engine import run
 
 
 def fixture(values, *, trials=1, groups=None, weights=None, slices=None, direction="maximize", system="a"):
@@ -119,6 +123,81 @@ class AnalysisTests(unittest.TestCase):
             change(right)
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, "requires"):
                 comparison(left, right)
+
+    def test_native_runs_remain_comparable_after_analysis_package_upgrade(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "samples.jsonl").write_text("".join(
+                json.dumps({"id": str(index), "input": index, "target": 1}) + "\n"
+                for index in range(2)), encoding="utf-8")
+            benchmark = root / "benchmark.json"
+            benchmark.write_text(json.dumps({
+                "schema_version": "1.0", "name": "release-comparison", "revision": "1",
+                "samples": "samples.jsonl", "protocol": {"trials": 1, "seed": 17},
+                "metrics": [{"name": "quality", "scorer": "exact_match", "direction": "maximize"}],
+            }), encoding="utf-8")
+            left, right = root / "left", root / "right"
+            with patch("ai_eval.__version__", "0.1.0"):
+                run(benchmark, left, system={"name": "model", "revision": "old"},
+                    target=lambda request: {"output": request["input"]})
+            with patch("ai_eval.__version__", "0.2.0"):
+                run(benchmark, right, system={"name": "model", "revision": "new"},
+                    target=lambda request: {"output": 1})
+            originals = [(path / "manifest.json").read_bytes() for path in (left, right)]
+            descriptors = [json.loads(raw)["benchmark"]["metrics"][0] for raw in originals]
+            self.assertEqual([item["implementation"]["version"] for item in descriptors], ["0.1.0", "0.2.0"])
+            self.assertEqual(descriptors[0]["implementation"]["module_sha256"],
+                             descriptors[1]["implementation"]["module_sha256"])
+            result = compare(left, right, "quality", resamples=100)
+            self.assertEqual(result["left_mean"], .5)
+            self.assertEqual(result["right_mean"], 1)
+            self.assertEqual(result["delta"], .5)
+            self.assertEqual(originals, [(path / "manifest.json").read_bytes() for path in (left, right)])
+
+    def test_native_package_version_exception_preserves_measurement_definition(self):
+        left = fixture({"a": [0], "b": [1]})
+        left["manifest"]["benchmark"]["metrics"][0].update(
+            bounds=[0, 1], implementation={"kind": "native", "package": "ai-evaluation",
+                "version": "0.1.0", "scorer": "exact_match", "module_sha256": "a" * 64})
+        changes = [
+            ("code", lambda metric: metric["implementation"].update(module_sha256="b" * 64)),
+            ("implementation scorer", lambda metric: metric["implementation"].update(scorer="numeric")),
+            ("kind", lambda metric: metric["implementation"].update(kind="plugin")),
+            ("package", lambda metric: metric["implementation"].update(package="another-package")),
+            ("bounds", lambda metric: metric.update(bounds=[0, 2])),
+            ("parameters", lambda metric: metric.update(params={"casefold": True})),
+            ("direction", lambda metric: metric.update(direction="minimize")),
+        ]
+        for name, change in changes:
+            right = copy.deepcopy(left)
+            descriptor = right["manifest"]["benchmark"]["metrics"][0]
+            descriptor["implementation"]["version"] = "0.2.0"
+            change(descriptor)
+            with self.subTest(change=name), self.assertRaisesRegex(ValueError, "same metric definition"):
+                comparison(left, right)
+
+    def test_native_package_versions_require_a_valid_recorded_code_identity(self):
+        for code in (None, "", "a" * 63, "g" * 64, True):
+            left = fixture({"a": [0], "b": [1]})
+            implementation = {"kind": "native", "package": "ai-evaluation", "version": "0.1.0",
+                              "scorer": "exact_match"}
+            if code is not None:
+                implementation["module_sha256"] = code
+            left["manifest"]["benchmark"]["metrics"][0]["implementation"] = implementation
+            right = copy.deepcopy(left)
+            right["manifest"]["benchmark"]["metrics"][0]["implementation"]["version"] = "0.2.0"
+            with self.subTest(code=code), self.assertRaisesRegex(ValueError, "same metric definition"):
+                comparison(left, right)
+
+    def test_plugin_version_changes_remain_incompatible(self):
+        left = fixture({"a": [0], "b": [1]})
+        left["manifest"]["benchmark"]["metrics"][0].update(
+            scorer="research_score", implementation={"kind": "plugin", "name": "research_score",
+                "entry_point": "research.scorers:score", "distribution": "research-scorers", "version": "1.0"})
+        right = copy.deepcopy(left)
+        right["manifest"]["benchmark"]["metrics"][0]["implementation"]["version"] = "2.0"
+        with self.assertRaisesRegex(ValueError, "same metric definition"):
+            comparison(left, right)
 
     def test_complete_cases_reports_every_exclusion(self):
         left = fixture({"a": [0, 1], "b": [1, 1], "c": [1, 1]}, trials=2)

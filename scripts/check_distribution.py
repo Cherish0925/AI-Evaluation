@@ -6,11 +6,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import venv
 from zipfile import ZipFile
 
 root = Path(__file__).resolve().parents[1]
-wheels = sorted((root / 'dist').glob('*.whl'))
+version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+wheels = sorted((root / 'dist').glob(f'envfoundry_ai_evaluation-{version}-*.whl'))
 if len(wheels) != 1:
     raise SystemExit('build exactly one current wheel before checking the distribution')
 with ZipFile(wheels[0]) as archive:
@@ -34,8 +36,8 @@ with tempfile.TemporaryDirectory(prefix='ai-eval-dist-') as directory:
         raise AssertionError(f'wheel check imported the wrong package: {installed}')
     capabilities = json.loads(subprocess.check_output([str(python), '-m', 'ai_eval', 'capabilities'],
                                                      cwd=temporary, env=clean_env, text=True))
-    assert capabilities['version'] == '0.1.0'
-    assert 'compare' in capabilities['operations']
+    assert capabilities['version'] == version
+    assert {'study', 'factorial', 'analyze-benchmark', 'analysis', 'guide'} <= set(capabilities['operations'])
     plugin = temporary / 'relocated-plugin'
     plugin.mkdir()
     shutil.copytree(root / 'src', plugin / 'src', ignore=shutil.ignore_patterns('__pycache__', '*.egg-info'))

@@ -25,7 +25,8 @@ def fixture(root):
         "samples": "samples.jsonl", "metrics": [{"name": "accuracy", "scorer": "exact_match", "direction": "maximize"}],
         "protocol": {"trials": 2, "seed": 17}})
     for name in ("baseline", "candidate"):
-        rows = [{"sample_id": f"s{i}", "output": i if name == "candidate" or i % 2 == 0 else -1} for i in range(4)]
+        rows = [{"sample_id": f"s{i}", "output": i if name == "candidate" or i % 2 == 0 else -1,
+                 "usage": {"calls": 2 if name == "candidate" else 1}} for i in range(4)]
         (root / f"{name}.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     write_json(root / "inspect.json", {"version": 2, "eval": {"task": "latency-study", "model": "recorded-model",
         "config": {"epochs": 1}}, "samples": [{"id": "a", "epoch": 1, "input": "x", "target": "y",
@@ -162,6 +163,42 @@ class CLITests(unittest.TestCase):
                          "--output", self.root / "bad", success=False)
         self.assertIn("config", error["error"])
 
+    def test_research_commands_share_saved_results_and_selective_reading(self):
+        self.run_fixture("baseline")
+        self.run_fixture("candidate")
+        for name in ("with-b", "with-ab"):
+            self.cli("run", self.root / "benchmark.json", "--predictions", self.root / "candidate.jsonl",
+                     "--system-name", name, "--system-revision", "1", "--output", self.root / name)
+        runs = [self.root / name for name in ("baseline", "candidate", "with-b", "with-ab")]
+        study = self.cli("study", *runs, "--metric", "accuracy", "--resource", "usage.calls",
+                         "--resamples", 30, "--slice-by", "domain", "--json-output", self.root / "study.json",
+                         "--html-output", self.root / "study.html")
+        self.assertEqual([system["mean"] for system in study["systems"]], [.5, 1, 1, 1])
+        self.assertEqual([system["resource_mean"] for system in study["systems"]], [1, 2, 2, 2])
+        self.assertEqual(study["pareto_frontier"], [0, 1, 2, 3])
+        effects = self.cli("factorial", *runs, "--metric", "accuracy", "--factor-a", "retrieval",
+                           "--factor-b", "memory", "--resamples", 30, "--json-output", self.root / "effects.json")
+        self.assertEqual(effects["effects"]["interaction"]["estimate"], -.5)
+        overview = self.cli("analysis", self.root / "effects.json", "--section", "summary")
+        self.assertNotIn("samples", overview["summary"])
+        self.assertEqual(overview["summary"]["sample_details"], 4)
+        selected = self.cli("analysis", self.root / "effects.json", "--section", "effects", "--search", "interaction")
+        self.assertEqual(selected["items"][0]["value"]["estimate"], -.5)
+        first = self.cli("analysis", self.root / "study.json", "--limit", 2)
+        second = self.cli("analysis", self.root / "study.json", "--offset", first["next_offset"], "--limit", 2)
+        self.assertIsNone(second["next_offset"])
+        self.assertEqual([row["sample_id"] for row in first["items"] + second["items"]], ["s0", "s1", "s2", "s3"])
+        items = self.cli("analyze-benchmark", *runs, "--metric", "accuracy", "--json-output", self.root / "items.json")
+        self.assertEqual(items["summary"]["ceiling_samples"], 2)
+        report = self.cli("report", "--analysis", self.root / "items.json", "--output", self.root / "items.html")
+        document = Path(report["path"]).read_text(encoding="utf-8")
+        embedded = re.search(r'<script id="analysis" type="application/json">(.*?)</script>', document, re.S)[1]
+        self.assertEqual(json.loads(embedded), items)
+        guide = self.cli("guide", "factorial-experiments")
+        self.assertIn("difference of differences", guide["content"])
+        error = self.cli("analysis", self.root / "study.json", "--section", "absent", success=False)
+        self.assertIn("section", error["error"])
+
 
 class ReportTests(unittest.TestCase):
     def test_report_retains_exact_json_and_literal_text(self):
@@ -209,7 +246,19 @@ class MCPTests(unittest.TestCase):
                         await session.initialize()
                         names = {tool.name for tool in (await session.list_tools()).tools}
                         self.assertEqual(names, {"eval_capabilities", "eval_benchmark", "eval_run", "eval_summarize", "eval_compare",
-                                                 "eval_import", "eval_samples", "eval_report", "eval_pass_at_k", "eval_calibrate_judge"})
+                                                 "eval_import", "eval_samples", "eval_report", "eval_pass_at_k", "eval_calibrate_judge",
+                                                 "eval_study", "eval_factorial", "eval_analyze_benchmark", "eval_analysis"})
+
+                        resources = {str(resource.uri) for resource in (await session.list_resources()).resources}
+                        self.assertEqual(resources, {f"evaluation://guides/{topic}" for topic in (
+                            "experimental-design", "system-comparison", "factorial-experiments", "benchmark-development")})
+                        guide = await session.read_resource("evaluation://guides/factorial-experiments")
+                        self.assertIn("difference of differences", guide.contents[0].text)
+                        prompts = {prompt.name for prompt in (await session.list_prompts()).prompts}
+                        self.assertEqual(prompts, {"design_study", "develop_benchmark", "interpret_results"})
+                        prompt = await session.get_prompt("interpret_results", arguments={
+                            "question": "Does retrieval help?", "analysis": "study.json"})
+                        self.assertIn("Does retrieval help?", prompt.messages[0].content.text)
 
                         async def call(name, **arguments):
                             result = await session.call_tool(name, arguments)
@@ -236,6 +285,24 @@ class MCPTests(unittest.TestCase):
                         self.assertEqual(len(json.loads((root / "summary.json").read_text())["samples"]), 4)
                         comparison = await call("eval_compare", left="baseline", right="candidate", metric="accuracy", resamples=100)
                         self.assertEqual(comparison["delta"], 0.5)
+                        await call("eval_run", benchmark="benchmark.json", output="combined", system_name="combined",
+                                   system_revision="1", predictions="candidate.jsonl")
+                        study = await call("eval_study", runs=["baseline", "candidate", "combined"], metric="accuracy",
+                                           resource="usage.calls", resamples=30, output="study.json")
+                        self.assertEqual([item["mean"] for item in study["systems"]], [.5, 1, 1])
+                        self.assertNotIn("samples", study)
+                        effects = await call("eval_factorial", run_00="baseline", run_10="candidate", run_01="plugin",
+                                             run_11="combined", metric="accuracy", resamples=30, output="effects.json")
+                        self.assertEqual(effects["effects"]["interaction"]["estimate"], -.5)
+                        items = await call("eval_analyze_benchmark", runs=["baseline", "candidate", "plugin"],
+                                           metric="accuracy", output="items.json")
+                        self.assertEqual(items["summary"]["ceiling_samples"], 2)
+                        overview = await call("eval_analysis", source="effects.json", section="summary")
+                        self.assertEqual(overview["summary"]["effects"]["interaction"]["estimate"], -.5)
+                        analysis_page = await call("eval_analysis", source="items.json", search="s1", limit=1)
+                        self.assertEqual(analysis_page["items"][0]["sample_id"], "s1")
+                        report = await call("eval_report", analysis="study.json", output="reports/study.html")
+                        self.assertTrue(Path(report["path"]).is_file())
                         page = await call("eval_samples", run="candidate", limit=3)
                         self.assertEqual(len(page["items"]), 3)
                         self.assertEqual(page["next_offset"], 3)

@@ -1,14 +1,14 @@
 # AI Evaluation
 
-Build methods and tools for measuring AI systems and making useful comparisons. An evaluation connects a scientific question, a task population, a versioned system, an execution protocol and observed results.
+Build a standalone research environment for benchmark design, measurement and experimental comparison. Develop capabilities around concrete research questions and working operations. Read `docs/contracts.md` before changing interfaces.
 
-Read `docs/contracts.md` before changing interfaces. Keep task execution, scoring and statistical analysis separate. Use existing domain engines and evaluation frameworks through adapters.
+- Keep target execution, scoring and statistical analysis distinct. Python, CLI, MCP and reports share the same implementation.
+- Preserve sample, independent-group, trial, system and protocol identities. Record the whole experimental condition, including model, harness and budget changes.
+- State the estimand, weighting and missing-data treatment. Multi-system and factorial analyses use one common cohort; resampling keeps related cases and paired conditions together.
+- Distinguish an execution or measurement failure from a scored task failure. Keep coverage visible when incomplete observations change the analyzed population.
+- Interpret item statistics relative to their reference panel and resource frontiers as observed tradeoffs. Factorial contrasts describe interventions; causal conclusions depend on the design.
+- Keep agent discovery compact and link to the method needed for the current question. Implement a connector or plugin when a real format or execution path needs one.
+- Make examples executable and report their actual origin: authored corpus, recorded predictions or a model experiment. Keep English and Chinese entry pages aligned.
+- Work on branches, preserve unrelated changes and use pull requests for publication. Optional integrations should preserve this environment's independent operation.
 
-- Preserve sample, independent-group, trial, system and protocol identities. Keep execution failures distinct from scored wrong answers.
-- Make the estimand, weighting and missing-data treatment explicit. Resample independent groups, pair the same cases across systems, and keep repeated attempts within their sample.
-- Describe supported operations precisely. Broad research scope does not require empty adapters or speculative interfaces.
-- Give agents a small discovery surface and task-specific documentation. Share one implementation across Python, CLI and MCP.
-- Keep examples executable and data compact. Report authored examples, imported results and model experiments by their actual origin.
-- Use branches and pull requests. Preserve unrelated work and update English and Chinese entry pages together.
-
-Run the affected tests and examples. For interface changes, exercise installed CLI/MCP behavior; for release changes, build and relocate the package.
+Run the affected examples and tests when behavior changes. Exercise installed CLI/MCP interfaces when changing them, and build and relocate the package when changing distribution behavior.

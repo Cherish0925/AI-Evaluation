@@ -50,7 +50,7 @@ Each trial starts one process. It receives one UTF-8 JSON request on stdin:
 {"sample_id":"lens-a","input":{"quantity":"focal_length","x":[2,3,4,5,6],"y":[8,7,6,5,4],"x_unit":"1/m","y_unit":"1/m"},"trial":0,"seed":17,"metadata":{}}
 ```
 
-The process writes one JSON response to stdout and sends diagnostics to stderr:
+The process writes one JSON response to stdout and sends runtime messages to stderr:
 
 ```json
 {"output":0.1,"usage":{"observations":5},"metadata":{"method":"centered-least-squares","quantity":"focal_length"}}
@@ -85,6 +85,33 @@ The HTML file includes the complete analysis JSON, sortable sample rows, a text 
 
 Use `ai-eval pass-at-k RUN --metric success --k 4` for completed binary success trials from a common sampling policy. The estimator and its assumptions are described in [contracts](contracts.md).
 
+## Research studies
+
+Compare several systems on one shared sample cohort, including a measured resource per attempt:
+
+```bash
+ai-eval study runs/base runs/expanded runs/reranked runs/combined \
+  --metric recall --baseline 0 --resource usage.token_comparisons \
+  --slice-by variant --json-output reports/study.json --html-output reports/study.html
+
+ai-eval factorial runs/base runs/expanded runs/reranked runs/combined \
+  --metric recall --factor-a query-expansion --factor-b phrase-reranking \
+  --json-output reports/effects.json --html-output reports/effects.html
+
+ai-eval analyze-benchmark runs/base runs/expanded runs/reranked runs/combined \
+  --metric recall --slice-by variant --json-output reports/items.json
+
+ai-eval analysis reports/effects.json --section summary
+ai-eval analysis reports/items.json --section samples --search paraphrase --limit 10
+ai-eval report --analysis reports/items.json --output reports/items.html
+```
+
+The factorial run order is `00, 10, 01, 11`. Study intervals and baseline contrasts use the same retained cohort and paired groups. Resource means describe attempts, not total experiment cost. The plotted Pareto frontier uses observed means; uncertainty remains visible alongside it. Benchmark analysis describes the chosen reference panel and excludes a sample's entire independent group from its item-rest correlation.
+
+`analysis --section summary` returns a compact overview. Other sections page arrays or object entries, such as `systems`, `conditions`, `effects`, `samples`, `slices` and `exclusions`. Object entries use `name` and `value`; available sections are included in each reply. Search matches the recorded JSON text. Reports render saved analyses without rerunning a target or changing the estimates.
+
+Run `python examples/research_study.py` for a complete authored retrieval experiment. The installed package also supplies task guidance through `ai-eval guide experimental-design`, `system-comparison`, `factorial-experiments` and `benchmark-development`.
+
 ## MCP
 
 Generate configuration using the interpreter with MCP support installed:
@@ -104,17 +131,29 @@ The stdio server resolves data and result paths relative to `--root`, independen
 | `eval_run` | Execute predictions, a command or an installed target and return run identity and outcome counts. |
 | `eval_summarize` | Return a metric estimate, group interval, coverage and slice overview. |
 | `eval_compare` | Return a paired comparison with explicit missing-data treatment. |
+| `eval_study` | Compare multiple systems on one cohort, with baseline contrasts and optional resource frontier. |
+| `eval_factorial` | Estimate main effects, simple effects and interaction from four crossed conditions. |
+| `eval_analyze_benchmark` | Describe item variation, saturation and group-excluded discrimination across a system panel. |
 | `eval_import` | Import Gym export-v1 or Inspect JSON observations into the run contract. |
 | `eval_samples` | Read filtered, paginated trial records. |
-| `eval_report` | Write a complete interactive summary or comparison HTML file. |
+| `eval_analysis` | Read a compact overview or selected rows from a saved analysis. |
+| `eval_report` | Write offline interactive HTML from saved analysis, a run summary or a paired comparison. |
 | `eval_pass_at_k` | Estimate success within k attempts from complete binary trials. |
 | `eval_calibrate_judge` | Compare categorical judge labels with reference judgments and inspect agreement. |
 
-MCP summaries omit the per-sample array and retain up to 20 slices and exclusions, with total counts. Supply `output` to `eval_summarize`, `eval_compare` or `eval_pass_at_k` to save the complete JSON. `eval_samples` defaults to 20 rows and accepts up to 100; optional output previews stop at 2,000 characters. Full outputs remain in `results.jsonl`. An agent can inspect a few relevant records without loading the entire experiment into context.
+MCP analysis replies return primary estimates and coverage. Samples, slices, groups and exclusions appear as counts; full system configurations remain in the saved analysis. Other lists retain up to 20 entries with total counts. Supply `output` on analysis tools to save complete JSON. Use `eval_analysis(source=..., section="summary")` for an overview or another named section for selected details. Both `eval_analysis` and `eval_samples` default to 20 rows and accept up to 100. Trial output previews stop at 2,000 characters; full outputs remain in `results.jsonl`.
+
+The server exposes four Markdown resources under `evaluation://guides/`: `experimental-design`, `system-comparison`, `factorial-experiments`, and `benchmark-development`. These work from an installed wheel as well as a checkout. Three prompts connect a question to the tools:
+
+| Prompt | Arguments | Use |
+|---|---|---|
+| `design_study` | `question`, `systems`, `population` | Specify and execute a scientific comparison. |
+| `develop_benchmark` | `capability`, `population`, `reference_systems` | Construct or revise a measurement using item behavior. |
+| `interpret_results` | `question`, `analysis` | Explain a recorded analysis and its relevant observations. |
 
 Judge calibration uses JSONL records such as `{"id":"case-1","group":"source-1","reference":"pass","judge":"fail"}`. Run `ai-eval calibrate-judge judgments.jsonl --labels '["pass","fail"]' --json-output reports/calibration.json`, or use `eval_calibrate_judge` with `source` and optional `output`. It reports label agreement, a group-bootstrap interval, Cohen's kappa and a confusion matrix. Reference judgments are a chosen comparison standard; agreement does not establish correctness. MCP returns up to 20 matrix labels and per-class records with explicit truncation counts. Saved JSON retains all labels and records.
 
-A useful harness sequence is `eval_benchmark` → `eval_run` → `eval_summarize`, then `eval_compare` for a stated candidate change. Inspect coverage and selected trial records before interpreting a difference. Use `eval_report` when the result needs human review.
+A useful harness sequence is `eval_benchmark` → `eval_run` → the analysis suited to the question. Use selected sample records to explain a difference, and `eval_report(analysis="reports/study.json", output="reports/study.html")` to share the result.
 
 ## Import observed experiments
 

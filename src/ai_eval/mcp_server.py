@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -15,9 +16,13 @@ def create_server(root: str | Path):
         raise ImportError('Install MCP support with python -m pip install ".[mcp]"') from exc
 
     from .analysis import compare, pass_at_k, summarize
-    from .cli import _write_json, benchmark_info, bounded_analysis, capabilities, run_info, run_target, samples_page
+    from .benchmarks import analyze_benchmark
+    from .cli import analysis_page, _write_json, benchmark_info, bounded_analysis, capabilities, run_info, run_target, samples_page
+    from .factorial import factorial
+    from .guidance import GUIDES, get_guide
     from .importers import import_gym, import_inspect
-    from .report import write_report
+    from .report import load_analysis, write_report
+    from .studies import compare_systems
 
     workspace = Path(root).resolve(strict=True)
     if not workspace.is_dir():
@@ -44,18 +49,22 @@ def create_server(root: str | Path):
     write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
     execute = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
     server = FastMCP("AI Evaluation", log_level="WARNING", instructions=(
-        "Inspect capabilities and benchmark contracts before running an evaluation. "
+        "Start with the research question, task population and the system conditions being compared. "
         "Paths are relative to the configured evaluation workspace. Run outputs are new directories; "
         "resume preserves recorded outcomes. System name, revision and configuration identify the experiment. "
-        "Summaries and comparisons omit sample arrays; provide output to persist the full analysis, "
-        "or use paginated samples and HTML reports. Compare matching benchmarks and inspect coverage."
+        "Analyses omit sample arrays; provide output to save complete JSON, then use eval_analysis "
+        "for selected details or eval_report for offline HTML. eval_samples reads original trials. "
+        "Research guides are resources under evaluation://guides/. Use study for system comparisons, "
+        "factorial for crossed component changes, and analyze_benchmark for item behavior across systems."
     ))
 
     @server.tool(annotations=read)
     def eval_capabilities() -> dict:
         """Discover operations, native scorers, import formats and installed entry points."""
         return capabilities() | {"workspace": str(workspace), "sample_page_limit": 100,
-                                 "analysis_detail_limit": 20}
+                                 "analysis_detail_limit": 20,
+                                 "resources": [f"evaluation://guides/{topic}" for topic in GUIDES],
+                                 "prompts": ["design_study", "develop_benchmark", "interpret_results"]}
 
     @server.tool(annotations=read)
     def eval_benchmark(benchmark: str) -> dict:
@@ -94,6 +103,37 @@ def create_server(root: str | Path):
         return analysis_result(value, output)
 
     @server.tool(annotations=write)
+    def eval_study(runs: list[str], metric: str, baseline: int = 0, resource: str | None = None,
+                   confidence: float = 0.95, resamples: int = 2000, seed: int = 0,
+                   missing: Literal["error", "complete_cases"] = "error",
+                   slice_by: str | None = None, output: str | None = None) -> dict:
+        """Compare systems on one cohort with baseline contrasts and an optional quality-resource frontier."""
+        value = compare_systems([path(run) for run in runs], metric, baseline=baseline, resource=resource,
+                                confidence=confidence, resamples=resamples, seed=seed,
+                                missing=missing, slice_by=slice_by)
+        return analysis_result(value, output)
+
+    @server.tool(annotations=write)
+    def eval_factorial(run_00: str, run_10: str, run_01: str, run_11: str, metric: str,
+                       factor_a: str = "A", factor_b: str = "B", confidence: float = 0.95,
+                       resamples: int = 2000, seed: int = 0,
+                       missing: Literal["error", "complete_cases"] = "error",
+                       slice_by: str | None = None, output: str | None = None) -> dict:
+        """Estimate two component effects, their simple effects and full difference-of-differences interaction."""
+        value = factorial(path(run_00), path(run_10), path(run_01), path(run_11), metric,
+                          factor_a=factor_a, factor_b=factor_b, confidence=confidence,
+                          resamples=resamples, seed=seed, missing=missing, slice_by=slice_by)
+        return analysis_result(value, output)
+
+    @server.tool(annotations=write)
+    def eval_analyze_benchmark(runs: list[str], metric: str,
+                               missing: Literal["error", "complete_cases"] = "error",
+                               slice_by: str | None = None, output: str | None = None) -> dict:
+        """Study item variation, saturation and whole-group-excluded discrimination across distinct systems."""
+        value = analyze_benchmark([path(run) for run in runs], metric, missing=missing, slice_by=slice_by)
+        return analysis_result(value, output)
+
+    @server.tool(annotations=write)
     def eval_import(source: str, output: str, source_format: Literal["gym", "inspect"],
                     scorer: str | None = None, value_key: str | None = None,
                     direction: Literal["maximize", "minimize"] = "maximize",
@@ -125,15 +165,29 @@ def create_server(root: str | Path):
                             sample_id=sample_id, slice_key=slice_key, slice_value=slice_value,
                             include_output=include_output)
 
+    @server.tool(annotations=read)
+    def eval_analysis(source: str, section: str = "samples", offset: int = 0, limit: int = 20,
+                      search: str | None = None) -> dict:
+        """Read saved analysis: section='summary' for overview, or paged samples, systems, effects and other sections."""
+        return analysis_page(path(source), section=section, offset=offset, limit=limit, search=search)
+
     @server.tool(annotations=write)
-    def eval_report(run: str, metric: str, output: str, against: str | None = None,
+    def eval_report(output: str, run: str | None = None, metric: str | None = None, against: str | None = None,
                     confidence: float = 0.95, resamples: int = 2000, seed: int = 0,
                     missing: Literal["error", "complete_cases"] = "error",
-                    slice_by: str | None = None, title: str | None = None) -> dict:
-        """Write portable interactive HTML containing the complete summary or paired analysis."""
-        options = {"confidence": confidence, "resamples": resamples, "seed": seed, "slice_by": slice_by}
-        value = (compare(path(run), path(against), metric, missing=missing, **options) if against is not None
-                 else summarize(path(run), metric, **options))
+                    slice_by: str | None = None, title: str | None = None,
+                    analysis: str | None = None) -> dict:
+        """Write offline interactive HTML from saved analysis, or calculate a run summary/paired comparison."""
+        if analysis is not None:
+            if run is not None or metric is not None or against is not None:
+                raise ValueError("analysis renders saved results; omit run, metric and against")
+            value = load_analysis(path(analysis))
+        else:
+            if run is None or metric is None:
+                raise ValueError("provide analysis, or run and metric")
+            options = {"confidence": confidence, "resamples": resamples, "seed": seed, "slice_by": slice_by}
+            value = (compare(path(run), path(against), metric, missing=missing, **options) if against is not None
+                     else summarize(path(run), metric, **options))
         return write_report(value, path(output), title=title)
 
     @server.tool(annotations=write)
@@ -150,5 +204,50 @@ def create_server(root: str | Path):
         value = calibrate(path(source), labels=labels, group_key=group_key,
                           confidence=confidence, resamples=resamples, seed=seed)
         return analysis_result(value, output)
+
+    def guide_resource(topic):
+        def read_guide() -> str:
+            guide = get_guide(topic)
+            return f"# {guide['title']}\n\n{guide['content']}\n"
+        return read_guide
+
+    for topic, (title, _) in GUIDES.items():
+        server.resource(f"evaluation://guides/{topic}", name=topic, title=title,
+                        description=title, mime_type="text/markdown")(guide_resource(topic))
+
+    @server.prompt()
+    def design_study(question: str, systems: str, population: str) -> str:
+        """Turn a research question into a runnable evaluation with a defined outcome and comparison."""
+        context = json.dumps({"question": question, "systems": systems, "population": population}, ensure_ascii=False)
+        return ("Design and, when the required inputs are available, run this evaluation: " + context + "\n"
+                "Read evaluation://guides/experimental-design. Identify the outcome, independent group, "
+                "changed conditions and resource budget. Discover existing benchmarks and targets. "
+                "Use eval_study for matched systems or eval_factorial for two crossed factors. "
+                "Keep only assumptions that affect the scientific comparison. Save the analysis and explain "
+                "the measured effect, uncertainty and population in ordinary language.")
+
+    @server.prompt()
+    def develop_benchmark(capability: str, population: str, reference_systems: str) -> str:
+        """Construct or revise a benchmark around observable capability and reference-panel behavior."""
+        context = json.dumps({"capability": capability, "population": population,
+                              "reference_systems": reference_systems}, ensure_ascii=False)
+        return ("Develop the benchmark described here: " + context + "\n"
+                "Read evaluation://guides/benchmark-development. Connect task choices and scoring to the "
+                "capability and population. Use existing compatible runs with eval_analyze_benchmark, "
+                "or prepare the missing runs. Explain item variation and saturation through concrete cases. "
+                "Treat panel-dependent correlations as descriptive. Propose revisions that improve the "
+                "intended measurement and assess them on additional systems or held-out groups.")
+
+    @server.prompt()
+    def interpret_results(question: str, analysis: str) -> str:
+        """Explain a saved analysis in relation to the original research question."""
+        context = json.dumps({"question": question, "analysis": analysis}, ensure_ascii=False)
+        return ("Interpret this recorded analysis: " + context + "\n"
+                "Use eval_analysis with section='summary', then relevant systems, effects, slices and samples. "
+                "Distinguish raw differences from direction-adjusted improvements, pointwise uncertainty "
+                "from selection among systems, and completed-case results from the planned population. "
+                "For a factorial study, connect main and simple effects to the interaction. Explain the "
+                "conclusion that the measurements support and a concrete next experiment if a mechanism "
+                "remains unresolved. Use eval_report for a complete portable view.")
 
     return server
