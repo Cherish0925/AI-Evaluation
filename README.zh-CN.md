@@ -1,92 +1,65 @@
 # AI Evaluation
 
-**面向 AI 模型、智能体与自主研究系统的基准设计、可复现评测和统计比较环境。**
+**设计基准、测量 AI 系统，研究哪些改变真正影响了系统行为。**
 
-[English](README.md) · [开展一次研究](docs/workflows.md) · [评测方法](docs/research.md) · [接入 Agent](docs/connect.md)
+[English](README.md) · [研究工作流](docs/workflows.md) · [研究方法](docs/research.md) · [接入 Harness](docs/connect.md)
 
-一次评测需要把研究问题、任务总体、系统版本、执行协议和观测结果联系起来。本环境使这些关系明确可计算，支持研究模型、Harness、数据、工具或推理预算的变化究竟带来了什么。
+AI Evaluation 是面向模型、检索系统、智能体和科学研究流程的独立研究环境。它将研究问题、任务总体、完整的系统描述、执行协议与观测结果联系起来。研究者与 Agent 使用同一套 Python、CLI 和 MCP 操作。
 
-研究范围包括语言与多模态模型、检索、代码生成、交互智能体、科学预测和自主科研。共享运行时处理结构化任务与观测，具体领域的执行和测量由相应引擎提供。Benchmark 是有明确任务总体与评分规则、可以持续修订的实验工具。
+核心问题很具体：在相同案例上，哪个系统表现更好？改进需要多少资源？两个组件各自有效，还是组合后才有效？哪些案例能够区分系统，哪些已经无法提供足够的分辨力？
 
-## 运行完整示例
+## 运行一项研究
 
-需要 Python 3.11 或更新版本。核心仅依赖标准库，MCP 按需安装。
+需要 Python 3.11 或更新版本。核心与报告仅依赖标准库。
 
 ```bash
 git clone https://github.com/EnvFoundry/AI-Evaluation.git
 cd AI-Evaluation
+python -m pip install -e .
+python examples/research_study.py --output runs/research-study
+```
+
+示例在人工构造的 18 条查询、6 个主题组上实际执行四种词法检索算法，交叉改变查询扩展与短语重排，记录算法执行的工作量，生成三份分析及可独立打开的 HTML 报告。
+
+| 查询扩展 | 短语重排 | Recall@1 | 平均词元比较次数 |
+| --- | --- | ---: | ---: |
+| 关闭 | 关闭 | 1/3 | 13⅓ |
+| 开启 | 关闭 | 1/3 | 26⅔ |
+| 关闭 | 开启 | 2/3 | 20⅔ |
+| 开启 | 开启 | 1 | 56 |
+
+查询扩展单独使用时没有提高召回率；开启短语重排后，它又带来了 `1/3` 的提升。析因分析揭示这个交互作用。系统比较给出观测到的质量与工作量前沿，基准分析指出参考系统全部答对的六个案例。这些结果解释的是示例构造的检索机制，不代表模型表现或对自然语言的泛化能力。
+
+打开 `runs/research-study/systems.html`、`factorial.html` 和 `benchmark-analysis.html`。同一目录保留语料、完整运行记录和分析 JSON。[研究工作流](docs/workflows.md) 解释各项操作，并提供预测回放与物理参数求解示例。
+
+## 从观测走向研究决策
+
+| 研究问题 | 操作 | 方法 |
+| --- | --- | --- |
+| 在给定资源预算下应选择哪个系统？ | `study` | 统一分析总体、相对基线的配对差值、按独立组计算的区间和观测资源前沿 |
+| 两项改动如何共同作用？ | `factorial` | 四种条件、主效应、条件效应和差分之差交互作用 |
+| 这些基准案例对我们的系统有多大分辨力？ | `analyze-benchmark` | 参考系统面板上的案例得分、离散程度、地板/天花板和案例与其余任务得分的关联 |
+
+执行支持 Python 函数、JSON 命令目标、已记录预测和目标插件。原生评分包括精确匹配、数值容差、集合/词元 F1、检索指标与概率评分；评分插件可以扩展测量。并发本地执行保留案例与试次记录，支持中断后继续。
+
+分析还包括单系统汇总、双系统配对比较、切片、二元 `pass@k` 和分类评判校准。重复尝试归属于各自案例，相关案例归属于独立组，缺失测量保留覆盖率信息。HTML 报告直接呈现已保存的分析。
+
+参见[析因实验](docs/factorial-experiments.md)、[基准开发](docs/benchmark-development.md)和[研究方法](docs/research.md)，理解结果的含义。[数据契约](docs/contracts.md)与[评分说明](docs/scoring.md)定义具体语义，[设计](docs/design.md)解释系统边界，[生态指南](docs/ecosystem.md)介绍可选的外部执行器和数据格式。
+
+## 与模型和 Agent 一起工作
+
+```bash
 python -m pip install -e '.[mcp]'
-python examples/run_examples.py --output runs/example
-```
-
-示例比较两组人工编写的检索结果，并通过子进程执行数值参数恢复，生成逐项记录、统计比较和独立 HTML 报告。示例用于说明流程，不代表真实模型的性能。
-
-```bash
-ai-eval run examples/retrieval/benchmark.json \
-  --predictions examples/retrieval/baseline.jsonl \
-  --system-name baseline --system-revision 1 --output runs/baseline
-ai-eval run examples/retrieval/benchmark.json \
-  --predictions examples/retrieval/candidate.jsonl \
-  --system-name candidate --system-revision 1 --output runs/candidate
-ai-eval compare runs/baseline runs/candidate --metric recall --slice-by variant
-ai-eval report runs/baseline --against runs/candidate \
-  --metric recall --output runs/comparison.html
-```
-
-## 已实现的能力
-
-| 层次 | 能力 |
-| --- | --- |
-| 研究定义 | Benchmark 与系统版本标识；样本、独立任务组、分层、重复次数、指标方向与权重 |
-| 执行 | Python 函数、JSON 子进程、预测结果回放、已安装的目标插件；本地并发与断点续跑 |
-| 评分 | 精确匹配、数值容差、集合与 Token F1、Recall@k、nDCG@k、Brier、Log loss；评分插件 |
-| 比较 | 加权样本均值、按独立任务组配对 Bootstrap、完整样本策略、分层分析、二值 Pass@k、覆盖率与资源记录 |
-| 评审校准 | 与参考标注的一致率、混淆矩阵、分类别 Precision/Recall、Cohen's kappa、分组不确定性和缺失标注覆盖率 |
-| 外部结果 | Gym export-v1 与 Inspect JSON-v2 导入，保留原始文件、评分定义和未获得结果的情况 |
-| 接口 | Python、CLI、MCP、仓库 Skill 与 Agent 插件清单；简短能力发现与分页样本读取 |
-| 报告 | 可筛选、排序、下载原始分析 JSON 的独立 HTML，直接使用同一套统计结果 |
-
-[接口约定](docs/contracts.md) 定义数据含义，[评分说明](docs/scoring.md) 给出指标的精确定义，[生态关系](docs/ecosystem.md) 区分现有接入、可复用上游与待实现扩展。
-
-运行 `ai-eval calibrate-judge examples/judgments.jsonl` 可查看人工构造的标注比较示例。[评审指南](docs/judges.md) 解释结果含义与参考标注选择。[Gym 组合示例](docs/gym-integration.md) 实际执行任务、导入结果、比较策略，并可进一步生成 Data Engineering 数据版本。
-
-## 科学问题决定评测设计
-
-先明确改变了什么、固定了什么：模型检查点、提示词、检索、记忆、工具、环境、采样方式与资源预算。在收集重复尝试之前确定独立统计单位。执行失败和部分覆盖保留在结果中，避免在平均值里消失。
-
-[研究方法](docs/research.md) 覆盖构念与真实场景的对应、分组不确定性、自动评审校准、数据污染、任务分布演化、自适应复用、迁移、质量—成本关系及长程科学成果。[架构设计](docs/design.md) 说明静态任务、交互轨迹与总体级指标如何协作。
-
-进入新领域时，先写清楚科学主张、可观测结果、分析单位和对照协议，再选择执行引擎。领域系统已经提供合适的实验世界和测量方法时，直接复用；接入层负责保留它们的含义。
-
-## 接入模型与 Agent
-
-```bash
 ai-eval capabilities
 ai-eval connect --root /absolute/path/to/studies --output mcp.json
 ```
 
-配置可交给支持 MCP 的宿主。函数或命令目标可以封装本地模型、云 API、检索系统或完整 Agent Harness；它接收任务输入与随机种子，参考答案留在评分侧。凭据与模型服务沿用目标系统自己的运行方式。
+目标可以封装本地模型、云 API、检索流程、模拟器或完整 Agent Harness。它接收任务输入与试次种子；参考答案留在评分侧。模型服务与供应商配置沿用目标自身的运行环境。
 
-[连接指南](docs/connect.md) 包含命令 JSON、插件入口、MCP 和源码启动方式。[评测 Skill](skills/ai-evaluation/SKILL.md) 按任务引导 Agent 阅读必要方法与执行操作，避免一次加载整个仓库。
-
-## 与其他研究环境协作
-
-| 环境 | 职责 |
-| --- | --- |
-| [Data Engineering](https://github.com/EnvFoundry/Data-Engineering) | 数据构建、变换、来源与采样 |
-| [Verifiable Agent Gym](https://github.com/EnvFoundry/Verifiable-Agent-Gym) | 可执行任务、交互环境、轨迹与验证结果 |
-| **AI Evaluation** | 基准设计、测量、实验比较与解释 |
-| [IOP](https://github.com/EnvFoundry/IOP) / [Optics-Photonics-AI-Lab](https://github.com/EnvFoundry/Optics-Photonics-AI-Lab) | 物理仪器操作与光学科研流程 |
+MCP 提供同一套执行与分析操作，以及方法资源、研究提示词和分页观测。Agent 可以从问题和少量记录入手，再读取能够推进判断的细节。[连接指南](docs/connect.md)说明配置、插件入口与 Python 接口；[评测 Skill](skills/ai-evaluation/SKILL.md)提供按任务组织的指导。
 
 ## 开发
 
-```bash
-python -m pip install -e '.[dev]'
-python -m unittest discover -s tests -v
-python examples/run_examples.py
-python -m build
-```
-
-贡献应带来有用的测量、可执行接入、研究方法或更清晰的实验。参见 [贡献说明](CONTRIBUTING.md)。当前执行引擎运行在本地；分布式调度、GPU 服务、领域模拟器和基准数据集由各自系统提供。
+贡献应带来有用的测量、研究方法、可运行接入或更清楚的实验。从 [AGENTS.md](AGENTS.md) 和[贡献说明](CONTRIBUTING.md)开始。当前引擎执行并分析本地运行；领域模拟器、模型服务和分布式调度可以沿用各自的运行方式。
 
 MIT 许可证。

@@ -1,66 +1,75 @@
 # Design
 
-AI Evaluation studies what a system can do, under which conditions, at what cost, and how strongly the observations support a claim. Its durable product is an interpretable comparison that another researcher can rerun or challenge. A benchmark is one instrument in that process.
+AI Evaluation studies what a system can do, under which conditions, at what cost, and what the observations allow a researcher to conclude. Its working unit is an experiment: a defined population, specified conditions, observations and an analysis that answers a question.
 
-The environment spans predictive models, language models, multimodal systems, agents and scientific workflows. It shares data and execution with other environments while owning measurement design, analysis and benchmark evolution. Scope comes from a common experimental structure, rather than making every task look like a chat completion.
+The environment runs independently. A researcher can begin with JSONL cases and recorded predictions, execute a Python function or command, or bring observations from an existing runner. The same structure covers predictive models, language and multimodal systems, retrieval, interactive agents and scientific workflows.
 
-## Six concepts
+## Experimental objects
 
-| Concept | Meaning | Representation in the initial implementation |
+| Object | Meaning | Representation |
 | --- | --- | --- |
-| Benchmark | A versioned population of cases, references, weights and related-case groups | JSON specification and JSONL samples; content-derived identity |
-| System | The complete object being compared: model, harness, tools, memory, retrieval and configuration | Versioned system description and identity in the run manifest |
-| Protocol | How observations are produced: trials, randomization, budget and stopping conditions | Trial count and seed in the benchmark; execution configuration in the manifest |
-| Observation | What actually happened on one sample and trial | Output, status, usage, timing, errors and artifact references in a result row |
-| Measurement | A declared interpretation of observations | Named scorers, directions and parameters; per-trial scores distinct from execution |
-| Claim | An estimate about a specified population or intervention, with its conditions | Summary or paired comparison, coverage, uncertainty, slices and an accompanying research interpretation |
+| Benchmark | Cases, references, weights and related-case groups drawn from a defined population | Versioned JSON specification and JSONL samples |
+| System | The complete condition being studied: model, prompts, harness, tools, retrieval, memory and configuration | System description and identity in the run manifest |
+| Protocol | How observations are collected | Trial count and seed in the benchmark; execution configuration in the manifest |
+| Observation | What happened on one sample and trial | Output, status, usage, timing and artifact references in a result row |
+| Measurement | A declared interpretation of an observation | Named scorer, direction and parameters; per-trial scores |
+| Analysis | Estimates about systems, interventions or benchmark cases | Common cohort, effects, uncertainty, coverage, slices and sample detail |
 
-These concepts do not require six services or a hierarchy of base classes. The local core uses files, ordinary Python functions and installed extension points. [Contracts](contracts.md) define exact fields and behavior. Research questions and claims remain researcher-authored; the runtime does not infer them from a score.
+These are data and functions, not separate services. [Contracts](contracts.md) define their fields. The research question, sampling rationale and interpretation belong beside the experiment; a score alone does not specify a scientific claim.
 
-The system boundary matters. Changing a retrieval index, reasoning budget or tool response changes the tested system even if model weights are constant. A fixed benchmark and protocol permit a direct paired comparison. A changed benchmark asks a different question and requires a linking study before scores can be treated as one time series.
+Changing a retrieval index, reasoning budget or tool response changes the studied system even when model weights remain fixed. Changing the benchmark changes the population or measurement. Direct paired comparisons hold the benchmark and protocol fixed; comparisons across benchmark revisions require a linking design.
 
-## Execution shapes
+## Three directions of analysis
 
-| Workload | Observation and measurement unit | Execution owner |
+A system comparison holds the cases fixed and varies the system. `study` analyzes all conditions on one common cohort, compares each with a baseline and relates quality to a chosen resource. This keeps a missing difficult case from quietly giving one pair of systems an easier population than another pair.
+
+A component experiment varies specified parts of the system. `factorial` estimates the four cell means, two main effects, conditional effects and interaction of a two-factor design. Run configuration records what each intervention actually changes. Paired observations improve precision; control of other changes determines whether an effect has a causal interpretation.
+
+Benchmark research holds the reference panel in view and examines the cases. `analyze-benchmark` describes item difficulty for that panel, variation across systems, floor and ceiling, and association with performance on other independent groups. These observations guide new case construction. They do not choose which capabilities the benchmark ought to represent.
+
+All three analyses share the sample/trial contract and independent-group resampling where intervals are computed. HTML and MCP consume those same results. [Research methods](research.md) connects the estimates to their assumptions; [workflows](workflows.md) makes the operations concrete.
+
+## Execution and measurement
+
+| Workload | Case and outcome | Target or measurement provider |
 | --- | --- | --- |
-| Classification, prediction, language tasks | A labeled case; probability, text or structured output | Native target callable, command adapter or an external model runner |
-| Retrieval and RAG | Query, retrieved set, answer and source references; component and end-to-end measurements | Retrieval/harness implementation; evaluation supplies fixed queries and scoring |
-| Code, browser, tool and embodied agents | An episode with actions, changing state, terminal outcome and resource consumption | Verifiable Agent Gym or another specialized interaction runtime |
-| Image, audio, video and spatial systems | Artifact-linked case or a population of generated artifacts | Modality-specific inference and measurement libraries |
-| Scientific and long-horizon research | A research problem, investigation trajectory and independently assessed scientific artifact | Research harness, simulator or instrument environment |
+| Classification, prediction and language tasks | Labeled input; probability, text or structured output | Model callable, command or external runner |
+| Retrieval and RAG | Query, retrieved set, answer and source references | Retrieval or generation pipeline; component and end-to-end scorers |
+| Code, browser, tool and embodied agents | Episode, changing state, terminal outcome and resource use | Interaction runtime with task-state measurements |
+| Image, audio, video and spatial systems | Artifact-linked case or population of generated artifacts | Modality-specific inference and measurement library |
+| Scientific and long-horizon research | Research problem, investigation and resulting scientific artifact | Research harness, simulator, instrument or independent assessor |
 
-An interactive environment supplies transitions and task observations; evaluation determines the experimental population and meaning of outcomes. A transcript alone cannot establish that the final state meets a task objective. Conversely, static question evaluation does not need an environment transition API.
+The target produces an outcome. The scorer gives that outcome a declared interpretation. Analysis then relates scored outcomes across cases and systems. Keeping these steps distinct allows recorded predictions to be rescored and existing measurements to be analyzed without rerunning the target.
 
-The initial aggregation core supports scalar, per-case measurements. Some multimodal measures compare entire populations or require joint fitting; a dataset-level distance cannot be converted into artificial per-image scores and averaged. Such measurements need a dedicated population-statistic adapter with its own sampling semantics. The current runtime does not implement that adapter. Structured artifact references enable transport, not automatic understanding of every modality.
+An interaction transcript can explain behavior; the terminal state establishes whether an action task was completed. For scientific measurements, preserve physical units, specimen identities and the uncertainty relevant to the quantity. For artifacts too large for a result row, retain references and the metadata needed to interpret them.
 
-## Research lifecycle
+The current aggregation core uses scalar per-case measurements. A metric defined on an entire generated population, such as a fitted distribution distance, needs its own population-level estimator and sampling method. Artifact transport and scorer plugins alone do not supply that method.
 
-Start with a decision: for example, whether a new memory mechanism improves completion of previously unseen project tasks within the same budget. Define the target population, independent unit, outcome, relevant effect size and resource limits before running the comparison. Write these beside the benchmark rather than burying them in a report template.
+## Responsibilities at the interfaces
 
-Construct cases from a versioned data release or task generator. Preserve source families, temporal boundaries and slice labels. Pilot the tasks and scorers on a small development set to find ambiguous references and broken measurements. Then freeze the comparison population and protocol.
-
-Execute both systems, retain observations, and analyze paired cases. The result should expose effect magnitude, uncertainty, missing outcomes, meaningful subpopulations and resource tradeoffs. Inspect the cases that change the scientific interpretation; a large transcript dump is not an analysis.
-
-The final step is an experiment that could overturn the apparent improvement: a different task family, later time window, new interaction setting or independently assessed research artifact. A discovered weakness may yield a new benchmark revision or training data. It does not silently rewrite the experiment that produced the discovery.
-
-## Interfaces and ownership
-
-| Boundary | Responsibility |
+| Participant | Supplies or owns |
 | --- | --- |
-| Data Engineering → Evaluation | Immutable releases, lineage, sampling frames, splits and mixture metadata |
-| Gym → Evaluation | Task and environment revisions, episode outcomes, verifier observations and rollouts |
-| Harness → Evaluation | Complete system identity, target execution, budgets and trajectory artifacts |
-| Evaluation → research or training | Comparable measurements, explicit uncertainty, failure cases and candidate curricula with provenance |
-| Evaluation → human or agent | The same analysis through Python, CLI, reports and bounded MCP tools |
+| Researcher or research agent | Question, target population, interventions, meaningful effect size and interpretation |
+| Case source | Task inputs, references, sampling weights, related-case groups and domain metadata |
+| Target | Model or harness execution, internal state, external calls and available resource accounting |
+| Scorer | Measurement definition, parameters and outcome-to-score mapping |
+| Analysis | Comparable cohorts, weighting, effects, coverage, uncertainty and saved result |
+| Human or agent interface | Discovery, focused access to records, research guidance and result presentation |
 
-IOP and Optics-Photonics-AI-Lab can supply instrument or simulation observations without changing these roles. Evaluation should retain physical units and specimen identities rather than reducing scientific measurements to an arbitrary success label.
+A single Python project can supply all of these. Existing datasets and runners can supply particular parts. Plugins implement a real scorer, target or importer; connectors translate observed formats. Skills and prompts guide experimental choices while invoking the shared implementation.
 
-Connectors translate real formats. Plugins implement a needed scorer, target or importer. Skills and prompts guide experimental reasoning and tool use. None of these should contain a second, inconsistent implementation of aggregation. Read the short task context first, then the specific protocol, sample or source artifact needed for the next decision.
+The agent interface starts with capabilities and method resources. Large results remain in saved analyses and trial records; pagination brings only the relevant cases into the next reasoning step. A human can use the same study through the command line and an HTML report.
 
-## Current engineering boundary
+## From one experiment to the next
 
-The first implementation is a local, resumable execution and analysis core: structured datasets, deterministic native scorers, offline predictions, extensible targets, grouped uncertainty, paired comparisons, run interchange and reports. Durable sample/trial keys allow interruption recovery while preserving recorded failures. Benchmark and system identities describe reproducibility inputs; replay still depends on external services, dependencies and artifacts remaining available.
+Start with a decision, such as whether a memory mechanism improves unseen project completion within the same tool budget. Specify the population, independent unit, outcome and interventions. Use a small development set to resolve ambiguous tasks and scoring, then fix the population and protocol for the comparison.
 
-The current loaders hold sample descriptors and result rows in memory; large modality artifacts should be referenced rather than embedded. Local workers schedule independent target calls. Targets must supply their own thread-safe interaction with model servers and external resources.
+Collect observations for every condition. Interpret the effect together with coverage, slices, resource use and examples that distinguish plausible explanations. A gain confined to familiar task families suggests a different next experiment from a gain across later and independently sampled tasks.
 
-Larger deployments can retain the observation contract while replacing scheduling and artifact storage. Distributed scheduling, adaptive test selection, population-level multimodal statistics, judge training and human adjudication workflows are extension work. Categorical judge–reference agreement analysis is already available through `calibrate-judge`; it does not train or modify the judge.
+Revise a benchmark when its scientific purpose requires new coverage or measurement. Preserve earlier observations as results of their original design. Anchor cases can help relate revisions, provided their role and linking assumptions are explicit.
+
+## Runtime scope
+
+The runtime executes local, resumable studies. It keeps structured case descriptors and result rows in memory, schedules independent target calls with local workers, and writes durable trial records. Targets manage their own model servers, sessions and external resources.
+
+Multi-system comparison, two-factor experiments, benchmark item analysis, categorical judge calibration and portable reports are implemented. Distributed scheduling, adaptive item selection, population-level multimodal estimators and judge training remain distinct extensions. Larger deployments can keep the observation contract while supplying their own scheduling and artifact storage.

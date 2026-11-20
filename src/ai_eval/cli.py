@@ -16,12 +16,14 @@ NATIVE_SCORERS = ["exact_match", "numeric", "set_f1", "token_f1", "recall_at_k",
 def capabilities() -> dict:
     from . import __version__
     return {"name": "AI Evaluation", "version": __version__, "schema_version": "1.0",
-            "operations": ["benchmark", "run", "summarize", "compare", "pass-at-k", "calibrate-judge", "samples", "report", "import-gym", "import-inspect"],
+            "operations": ["benchmark", "run", "summarize", "compare", "study", "factorial", "analyze-benchmark",
+                           "pass-at-k", "calibrate-judge", "samples", "analysis", "report", "guide", "import-gym", "import-inspect"],
             "targets": ["predictions-jsonl", "command-json", "entry-point"], "scorers": NATIVE_SCORERS,
             "imports": ["gym-export-v1", "inspect-json"],
             "plugins": {group: sorted(ep.name for ep in entry_points(group=group))
                         for group in ("ai_eval.scorers", "ai_eval.targets", "ai_eval.importers")},
-            "analysis": "weighted sample means; paired independent-group bootstrap; explicit missing coverage",
+            "analysis": "common-cohort system comparisons; resource frontiers; factorial effects; benchmark item analysis; group uncertainty",
+            "guides": ["experimental-design", "system-comparison", "factorial-experiments", "benchmark-development"],
             "execution": "local workers; external targets own their model or harness implementation"}
 
 
@@ -29,7 +31,7 @@ def benchmark_info(path: str | Path) -> dict:
     from .contracts import load_benchmark
     benchmark = load_benchmark(path)
     samples = benchmark["samples"]
-    return {key: benchmark[key] for key in ("name", "revision", "benchmark_id", "sample_sha256", "metrics", "protocol")} | {
+    return {key: benchmark[key] for key in ("name", "revision", "metrics", "protocol")} | {
         "description": benchmark.get("description", ""), "samples": len(samples),
         "independent_groups": len({sample.get("group", sample["id"]) for sample in samples}),
         "slice_fields": sorted({key for sample in samples for key in sample.get("slices", {})})}
@@ -75,31 +77,58 @@ def run_target(benchmark, output, *, system_name, system_revision, system_config
 
 def bounded_analysis(value: dict, *, limit: int = 20) -> dict:
     """Keep MCP responses small while retaining the number of omitted details."""
-    result = {key: val for key, val in value.items() if key not in ("samples", "slices", "exclusions")}
-    result["sample_details"] = len(value.get("samples", []))
-    for key in ("slices", "exclusions"):
-        items = value.get(key)
-        if isinstance(items, list):
-            result[key] = []
-            for item in items[:limit]:
-                item = dict(item)
-                if "excluded_sample_ids" in item:
-                    item["excluded_sample_ids_total"] = len(item["excluded_sample_ids"])
-                    item["excluded_sample_ids"] = item["excluded_sample_ids"][:limit]
-                result[key].append(item)
-            result[key + "_total"] = len(items)
-        elif items is not None:
-            result[key] = items
+    def compact(item):
+        if isinstance(item, list):
+            return [compact(child) for child in item[:limit]]
+        if isinstance(item, dict):
+            result = {}
+            for key, child in item.items():
+                if key == "samples" and isinstance(child, list):
+                    result["sample_details"] = len(child)
+                elif key in ("slices", "exclusions", "groups") and isinstance(child, list):
+                    result[key + "_total"] = len(child)
+                elif key in ("config", "system") and isinstance(child, dict):
+                    # Full target configurations belong in the saved analysis.
+                    result[key + "_available"] = True
+                else:
+                    result[key] = compact(child)
+                    if isinstance(child, list):
+                        result[key + "_total"] = len(child)
+            return result
+        return item
+
+    result = compact(value)
+    result.setdefault("sample_details", 0)
+    result["available_sections"] = [key for key, child in value.items() if isinstance(child, (list, dict))]
     if isinstance(value.get("confusion"), dict):
-        matrix = value["confusion"]
-        labels = matrix.get("labels", [])
-        result["confusion"] = dict(matrix, labels=labels[:limit],
-                                   rows=[row[:limit] for row in matrix.get("rows", [])[:limit]],
-                                   labels_total=len(labels), truncated=len(labels) > limit)
-    if isinstance(value.get("per_class"), list):
-        result["per_class"] = value["per_class"][:limit]
-        result["per_class_total"] = len(value["per_class"])
+        result["confusion"]["truncated"] = len(value["confusion"].get("labels", [])) > limit
     return result
+
+
+def analysis_page(source, *, section="samples", offset=0, limit=20, search=None) -> dict:
+    """Read one section of a saved analysis without loading every case into a host."""
+    from .report import load_analysis
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("offset must be nonnegative and limit between 1 and 100")
+    value = load_analysis(source)
+    sections = ["summary"] + [key for key, rows in value.items() if isinstance(rows, (list, dict)) and key != "summary"]
+    if section not in sections:
+        raise ValueError(f"analysis section must be one of: {', '.join(sections)}")
+    if search is not None and not isinstance(search, str):
+        raise ValueError("search must be text")
+    if section == "summary":
+        return {"kind": value.get("kind", "analysis"), "section": section,
+                "sections": sections, "summary": bounded_analysis(value)}
+    rows = value[section]
+    if isinstance(rows, dict):
+        rows = [{"name": key, "value": row} for key, row in rows.items()]
+    selected = [row for row in rows if not search or search.casefold() in json.dumps(row, ensure_ascii=False).casefold()]
+    page = selected[offset:offset + limit]
+    next_offset = offset + len(page)
+    return {"kind": value.get("kind", "analysis"), "section": section, "sections": sections,
+            "total": len(selected), "offset": offset, "limit": limit,
+            "next_offset": next_offset if next_offset < len(selected) else None,
+            "items": page}
 
 
 def samples_page(path, *, offset=0, limit=20, status=None, sample_id=None,
@@ -133,8 +162,8 @@ def samples_page(path, *, offset=0, limit=20, status=None, sample_id=None,
             "next_offset": next_offset if next_offset < len(selected) else None, "items": page}
 
 
-def _analysis_options(command):
-    command.add_argument("--metric", required=True)
+def _analysis_options(command, *, metric_required=True):
+    command.add_argument("--metric", required=metric_required)
     command.add_argument("--confidence", type=float, default=0.95)
     command.add_argument("--resamples", type=int, default=2000)
     command.add_argument("--seed", type=int, default=0)
@@ -172,6 +201,27 @@ def parser():
     comparison.add_argument("right", type=Path)
     comparison.add_argument("--missing", choices=("error", "complete_cases"), default="error")
     _analysis_options(comparison)
+    study = sub.add_parser("study", help="Compare systems on one shared population and a resource-quality frontier")
+    study.add_argument("runs", nargs="+", type=Path)
+    study.add_argument("--baseline", type=int, default=0, help="Zero-based baseline index in the run list")
+    study.add_argument("--resource", help="elapsed_seconds or usage.FIELD, measured per attempt")
+    study.add_argument("--missing", choices=("error", "complete_cases"), default="error")
+    study.add_argument("--html-output", type=Path)
+    _analysis_options(study)
+    factorial = sub.add_parser("factorial", help="Estimate component effects and interaction from four matched conditions")
+    factorial.add_argument("runs", nargs=4, type=Path, metavar="RUN", help="Conditions in 00, 10, 01, 11 order")
+    factorial.add_argument("--factor-a", default="A")
+    factorial.add_argument("--factor-b", default="B")
+    factorial.add_argument("--missing", choices=("error", "complete_cases"), default="error")
+    factorial.add_argument("--html-output", type=Path)
+    _analysis_options(factorial)
+    development = sub.add_parser("analyze-benchmark", help="Study item variation and group-excluded discrimination across systems")
+    development.add_argument("runs", nargs="+", type=Path)
+    development.add_argument("--metric", required=True)
+    development.add_argument("--missing", choices=("error", "complete_cases"), default="error")
+    development.add_argument("--slice-by")
+    development.add_argument("--json-output", type=Path)
+    development.add_argument("--html-output", type=Path)
     passk = sub.add_parser("pass-at-k", help="Estimate success within k attempts for binary outcomes")
     passk.add_argument("run", type=Path)
     passk.add_argument("--metric", required=True)
@@ -193,13 +243,22 @@ def parser():
     sample.add_argument("--slice-key")
     sample.add_argument("--slice-value", help="JSON scalar value")
     sample.add_argument("--include-output", action="store_true")
+    analysis = sub.add_parser("analysis", help="Read a filtered page of a saved analysis")
+    analysis.add_argument("source", type=Path)
+    analysis.add_argument("--section", default="samples")
+    analysis.add_argument("--offset", type=int, default=0)
+    analysis.add_argument("--limit", type=int, default=20)
+    analysis.add_argument("--search")
+    guide = sub.add_parser("guide", help="Read concise guidance for the current research task")
+    guide.add_argument("topic", nargs="?", default="experimental-design")
     report = sub.add_parser("report", help="Write a self-contained interactive HTML analysis")
-    report.add_argument("run", type=Path)
+    report.add_argument("run", nargs="?", type=Path)
+    report.add_argument("--analysis", type=Path, help="Render an already computed analysis JSON")
     report.add_argument("--against", type=Path, help="Right-hand candidate run; run is the left baseline")
     report.add_argument("--output", type=Path, required=True)
     report.add_argument("--title")
     report.add_argument("--missing", choices=("error", "complete_cases"), default="error")
-    _analysis_options(report)
+    _analysis_options(report, metric_required=False)
     gym = sub.add_parser("import-gym", help="Import Gym export-v1 observed outcomes")
     gym.add_argument("source", type=Path)
     gym.add_argument("--output", type=Path, required=True)
@@ -246,8 +305,15 @@ def main(argv=None):
                                target_plugin=args.target_plugin,
                                target_config=json.loads(args.target_config) if args.target_config is not None else None,
                                workers=args.workers, resume=args.resume, timeout=args.timeout)
+        elif args.operation == "report" and args.analysis is not None:
+            if args.run is not None or args.against is not None or args.metric is not None:
+                raise ValueError("--analysis renders saved results; omit run, --against and --metric")
+            from .report import load_analysis, write_report
+            value = write_report(load_analysis(args.analysis), args.output, title=args.title)
         elif args.operation in ("summarize", "compare", "report"):
             from .analysis import compare, summarize
+            if args.operation == "report" and (args.run is None or args.metric is None):
+                raise ValueError("report requires a run and --metric, or --analysis")
             options = {key: getattr(args, key) for key in ("confidence", "resamples", "seed", "slice_by")}
             if args.operation == "compare":
                 value = compare(args.left, args.right, args.metric, missing=args.missing, **options)
@@ -260,6 +326,29 @@ def main(argv=None):
             if args.operation == "report":
                 from .report import write_report
                 value = write_report(value, args.output, title=args.title)
+        elif args.operation in ("study", "factorial", "analyze-benchmark"):
+            if args.operation == "analyze-benchmark":
+                from .benchmarks import analyze_benchmark
+                value = analyze_benchmark(args.runs, args.metric, missing=args.missing, slice_by=args.slice_by)
+            else:
+                options = {key: getattr(args, key) for key in ("confidence", "resamples", "seed", "slice_by", "missing")}
+                if args.operation == "study":
+                    from .studies import compare_systems
+                    value = compare_systems(args.runs, args.metric, baseline=args.baseline, resource=args.resource, **options)
+                else:
+                    from .factorial import factorial
+                    value = factorial(*args.runs, args.metric, factor_a=args.factor_a, factor_b=args.factor_b, **options)
+            if args.json_output is not None:
+                _write_json(args.json_output, value)
+            if args.html_output is not None:
+                from .report import write_report
+                report = write_report(value, args.html_output)
+                value = dict(value, report=report)
+        elif args.operation == "analysis":
+            value = analysis_page(args.source, section=args.section, offset=args.offset, limit=args.limit, search=args.search)
+        elif args.operation == "guide":
+            from .guidance import get_guide
+            value = get_guide(args.topic)
         elif args.operation == "pass-at-k":
             from .analysis import pass_at_k
             value = pass_at_k(args.run, args.metric, args.k)

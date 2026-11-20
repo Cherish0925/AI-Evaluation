@@ -1,33 +1,94 @@
 # Workflows
 
-Run commands from the repository root after `python -m pip install -e .`. Use a fresh output directory for a new experiment. `ai-eval capabilities` lists the installed operations and extensions; `ai-eval benchmark PATH` describes a benchmark without running it.
+Run commands from the repository root after `python -m pip install -e .`. Choose a new output directory for a new experiment. `ai-eval capabilities` lists installed operations; `ai-eval benchmark PATH` describes the cases, groups, metrics and protocol.
 
-`python examples/run_examples.py` runs both bundled studies through the CLI, checks their known outcomes and removes temporary outputs afterward. Add `--output runs/examples` to retain the run records and HTML reports in a new directory.
-
-## Compare two systems on the same cases
-
-The [retrieval example](../examples/retrieval/benchmark.json) contains six synthetic cases with three labeled groups and authored predictions. It demonstrates the data flow and statistics; it is not a measurement of any real model or retriever.
+## Study mechanisms, resources and benchmark cases
 
 ```bash
-ai-eval benchmark examples/retrieval/benchmark.json
-ai-eval run examples/retrieval/benchmark.json --predictions examples/retrieval/baseline.jsonl \
-  --system-name retriever --system-revision baseline --output runs/tutorial-baseline
-ai-eval run examples/retrieval/benchmark.json --predictions examples/retrieval/candidate.jsonl \
-  --system-name retriever --system-revision candidate --output runs/tutorial-candidate
-ai-eval summarize runs/tutorial-baseline --metric recall --slice-by variant
-ai-eval compare runs/tutorial-baseline runs/tutorial-candidate \
-  --metric recall --slice-by variant --json-output runs/tutorial-comparison.json
-ai-eval report runs/tutorial-baseline --against runs/tutorial-candidate \
-  --metric recall --slice-by variant --output runs/tutorial-report.html
+python examples/research_study.py --output runs/research-study
 ```
 
-The authored mean recalls are `1/3` and `11/12`, with candidate-minus-baseline difference `7/12`. The interval resamples the three groups, not six independent queries. These tiny fixtures are useful for understanding the estimator, not for establishing generalization. The report presents the same comparison returned by the analysis API.
+This standalone example constructs a corpus and executes four actual lexical retrieval algorithms through the command target. It needs no model service, credentials or other repository. The two factors are query expansion with a small synonym dictionary and an adjacent-phrase reranking bonus. Cell order is `00`, `10`, `01`, `11`: neither component, expansion only, phrases only, both.
 
-For a new study, create a benchmark beside its sample file using the same structure, then collect actual system predictions. Keep that benchmark fixed across systems. Specify the complete model/harness/retrieval configuration using `--system-config` as a JSON object. A revision should identify a concrete implementation or checkpoint, not a floating label such as `latest`.
+Each of six topic groups contains three cases. The relevant document is identified by a reference used only during scoring; targets receive the query and candidate documents. Tie-breaking preserves candidate order.
+
+| Case variant | Construction | Conditions that retrieve the relevant document |
+| --- | --- | --- |
+| Direct | Relevant document covers both query terms; distractor covers one | All four |
+| Word order | Relevant document contains the query phrase; distractor separates the same terms | `01`, `11` |
+| Paraphrase | Relevant document uses adjacent synonyms; distractor separates the original terms | `11` |
+
+The resulting recall@1 values are `1/3`, `1/3`, `2/3`, `1`. The script counts the string equality operations in each algorithm's scoring loops. This resource measures algorithmic work in the example; it is not model token consumption, latency or monetary cost.
+
+The output directory contains `cases/`, four run directories and three JSON/HTML analyses. The CLI calls below show how to perform those analyses directly, using separate report paths.
+
+### Compare systems and resource use
+
+```bash
+ai-eval study runs/research-study/00 runs/research-study/10 \
+  runs/research-study/01 runs/research-study/11 \
+  --metric recall --resource usage.token_comparisons --slice-by variant \
+  --json-output reports/retrieval-systems.json \
+  --html-output reports/retrieval-systems.html
+```
+
+The first run is the default baseline. Every comparison uses the same retained population. Here expansion alone costs more than the baseline without improving recall, so it lies off the observed frontier. Baseline, phrase reranking and the combined system occupy different quality–work tradeoffs.
+
+For a real model study, select a consistently recorded resource such as `usage.output_tokens`, `usage.tool_calls` or `elapsed_seconds`. Keep its units and accounting boundary fixed. Each budget or configuration is a separate condition; the frontier describes observed points.
+
+### Estimate the interaction
+
+```bash
+ai-eval factorial runs/research-study/00 runs/research-study/10 \
+  runs/research-study/01 runs/research-study/11 \
+  --metric recall --factor-a query_expansion --factor-b phrase_reranking \
+  --slice-by variant --json-output reports/retrieval-factorial.json \
+  --html-output reports/retrieval-factorial.html
+```
+
+The expansion main effect is `1/6`, the phrase main effect is `1/2`, and the interaction is `1/3`. Expansion contributes zero when phrases are off and `1/3` when they are on. A comparison of expansion-only against baseline would miss the combined mechanism. [Factorial experiments](factorial-experiments.md) explains the cell order, contrasts and group intervals.
+
+All six topics deliberately share the same mechanism and case proportions, so their group contrasts coincide. Narrow or degenerate intervals in this example do not establish how the algorithms generalize to new language, topics or distractor patterns. A substantive retrieval study would sample that diversity.
+
+### Examine the benchmark
+
+```bash
+ai-eval analyze-benchmark runs/research-study/00 runs/research-study/10 \
+  runs/research-study/01 runs/research-study/11 \
+  --metric recall --slice-by variant \
+  --json-output reports/retrieval-benchmark.json \
+  --html-output reports/retrieval-benchmark.html
+```
+
+The six direct cases are at the ceiling for this panel. The other variants distinguish component behavior. Item–rest association excludes the item's whole topic group. Use these observations to design a next corpus with varied ambiguity, synonym coverage and phrase structure; the present panel does not determine which tasks matter for a broader population. See [benchmark development](benchmark-development.md).
+
+A saved analysis can be rendered without recomputation:
+
+```bash
+ai-eval report --analysis reports/retrieval-factorial.json \
+  --output reports/retrieval-factorial-copy.html
+```
+
+## Compare recorded predictions
+
+The [prediction replay example](../examples/retrieval/benchmark.json) contains six authored retrieval cases in three groups. Its predictions are constructed records, rather than outputs of a running retriever.
+
+```bash
+ai-eval run examples/retrieval/benchmark.json \
+  --predictions examples/retrieval/baseline.jsonl \
+  --system-name retriever --system-revision baseline --output runs/replay-baseline
+ai-eval run examples/retrieval/benchmark.json \
+  --predictions examples/retrieval/candidate.jsonl \
+  --system-name retriever --system-revision candidate --output runs/replay-candidate
+ai-eval compare runs/replay-baseline runs/replay-candidate \
+  --metric recall --slice-by variant --json-output reports/replay.json
+```
+
+Mean recall is `1/3` versus `11/12`, a candidate-minus-baseline difference of `7/12`. The interval resamples the three related-case groups. For your own study, replace the cases and predictions while keeping one benchmark fixed across systems. Record the actual checkpoint, prompts and harness configuration in `--system-config`.
 
 ## Execute a physical-parameter solver
 
-The [numeric example](../examples/numeric/benchmark.json) executes a [least-squares solver](../examples/numeric/solver.py) on eight authored calibration series. It fits $y=ax+b$ with a free intercept and converts the fitted coefficient to the requested physical quantity:
+The [numeric example](../examples/numeric/benchmark.json) executes a [least-squares solver](../examples/numeric/solver.py) on eight authored calibration series. It fits $y=ax+b$ with a free intercept and converts the fitted coefficient to a physical quantity:
 
 | Observation relation | Recovered parameter |
 | --- | --- |
@@ -36,7 +97,7 @@ The [numeric example](../examples/numeric/benchmark.json) executes a [least-squa
 | Inverse object and image distances | Thin-lens focal length $1/b$ |
 | Time and logarithm of normalized amplitude | Exponential-decay time constant $-1/a$ |
 
-Selected cases contain constructed residuals orthogonal to the linear fit, so the expected fitted parameters remain known exactly. These are controlled numerical examples, not instrument data. The solver receives observations and task metadata, computes the parameter, and returns fit diagnostics; it never receives the reference answer.
+Selected cases contain residuals constructed to be orthogonal to the fit, preserving known fitted parameters. These are numerical examples, not instrument observations. The target receives the series and task metadata, and computes the requested quantity without the reference answer.
 
 ```bash
 ai-eval run examples/numeric/benchmark.json \
@@ -46,71 +107,53 @@ ai-eval run examples/numeric/benchmark.json \
   --workers 2 --output runs/physics-parameters
 ai-eval summarize runs/physics-parameters --metric accuracy --slice-by domain
 ai-eval report runs/physics-parameters --metric accuracy --slice-by domain \
-  --output runs/physics-parameters.html
+  --output reports/physics-parameters.html
 ```
 
-All eight parameters should meet the declared numerical tolerance. The sample files preserve physical units; the target metadata records fitted slope, intercept and residual sum of squares. For an experimental study, replace the controlled observations with calibrated measurements and choose tolerances and uncertainty methods appropriate to the physical question.
+All eight parameters meet the declared numerical tolerance. The cases preserve physical units; output metadata contains slope, intercept and residual sum of squares. To study actual measurements, supply calibrated observations and choose tolerances and uncertainty methods appropriate to the physical question.
 
-## Inspect incomplete runs and repeated attempts
+`python examples/run_examples.py --output runs/basic-examples` executes the replay and numerical examples together. Both example scripts use temporary directories when `--output` is omitted.
+
+## Work with incomplete runs and repeated attempts
 
 ```bash
-ai-eval samples runs/tutorial-baseline --limit 10 --include-output
-ai-eval samples runs/tutorial-baseline --status target_error --limit 10
+ai-eval samples runs/replay-baseline --limit 10 --include-output
+ai-eval samples runs/replay-baseline --status target_error --limit 10
 ```
 
-`summarize` exposes scored coverage, missing observations and statuses. `compare` requires complete planned scores on both sides by default. If a scientific question justifies analysis of complete samples only, use `--missing complete_cases` and examine the reported exclusions. This option changes the analyzed population; it does not repair the missing outcomes.
+`summarize` reports scored coverage, missing observations and statuses. Comparison, study and factorial operations require all planned scores by default. `--missing complete_cases` explicitly selects samples complete in every participating run and reports exclusions. The resulting estimate concerns that retained population.
 
-After interruption, repeat the original `run` command with `--resume` and the same inputs and configuration. Recorded results, including failures, are retained; only work without a complete durable record is issued again. To study a corrected implementation, use a new revision and run directory.
+After an interruption, repeat the original `run` command with `--resume` and the same inputs and configuration. Recorded outcomes, including failures, remain; only unrecorded trials are scheduled. A changed implementation receives a new revision and run directory.
 
-For stochastic systems, declare `protocol.trials` before collecting attempts and include `trial` in every prediction row. Omitting `trial` reuses one prediction across attempts; it does not create independent generations. A binary success metric with enough completed attempts can be analyzed with `ai-eval pass-at-k RUN --metric success --k 3`. See [research methods](research.md) for the difference between success within a search budget and repeated-run reliability.
+For stochastic systems, declare `protocol.trials` and record each attempt's `trial`. Omitting it in replay data reuses one prediction across attempts. A binary success metric with enough completed attempts supports `ai-eval pass-at-k RUN --metric success --k 3`; [research methods](research.md) distinguishes success within a search budget from repeated-run reliability.
 
-## Connect a real model or harness
+## Bring your model or harness
 
-A command target receives one JSON request on standard input and writes one JSON response on standard output. The request includes `sample_id`, `input`, `trial`, `seed` and sample metadata. Return `{"output": ..., "usage": {...}, "metadata": {...}}`. Keep logging on standard error. The target receives the task input; scoring receives its reference answer.
+A command target receives one JSON request on standard input and writes one JSON response on standard output. The request contains `sample_id`, `input`, `trial`, `seed` and sample metadata. Return `{"output": ..., "usage": {...}, "metadata": {...}}`, with logs on standard error. Scoring handles the reference answer separately.
 
-Once an actual `my_harness.py` implements that protocol, invoke it as follows:
+Once your `my_harness.py` implements this protocol:
 
 ```bash
-ai-eval run examples/retrieval/benchmark.json \
+ai-eval run benchmark.json \
   --command-json '["python", "my_harness.py"]' \
   --system-name research-harness --system-revision experiment-1 \
   --system-config '{"model_revision":"your-checkpoint","tool_budget":20}' \
   --workers 4 --timeout 300 --output runs/harness-experiment-1
 ```
 
-The command adapter enforces a per-call timeout. The harness owns its internal model, tool, memory and environment behavior. Report available token/tool usage and artifact references in the response. For persistent sessions or in-process execution, use a Python target callable with `ai_eval.engine.run`; that callable owns its external operation deadlines. Installed target factories can also be selected with `--target-plugin` and `--target-config`; [connection guidance](connect.md) describes registration.
-
-For an ablation, freeze the benchmark and change one system component. If two components may interact, run all four combinations and analyze the interactions explicitly; pairwise CLI results alone do not fit a factorial model. To compare budgets, record each budget as part of system configuration and retain a separate run for each condition.
-
-## Bring observations from an existing runner
-
-These commands require real exported logs at the indicated paths:
-
-```bash
-ai-eval import-gym exports/rollouts.jsonl --output runs/gym-study \
-  --system-name research-agent --system-revision experiment-1 \
-  --benchmark-name project-tasks --revision 1
-
-ai-eval import-inspect logs/study.json --scorer accuracy \
-  --output runs/inspect-study
-```
-
-Gym input must match its export-v1 schema. Inspect input is a version-2 JSON evaluation log; select the score name actually present in that log, use `--value-key` for one field of a structured score, and set `--direction minimize` for a loss metric. The import retains observed outcomes and provenance. It does not execute the upstream task again. See [contracts](contracts.md) and [ecosystem](ecosystem.md) for the distinction between importing scores and evaluating predictions.
-
-Before comparing imported runs, establish matching task populations, trial definitions and measurement semantics. Shared display names are insufficient. Aggregate-only published results remain aggregate observations; they cannot support this sample-paired comparison.
+The harness owns generation, tools, memory and environment behavior. Supply available resource use and artifact references with each response. Python callables support persistent execution; target plugins expose installed factories. [Connection guidance](connect.md) describes these interfaces, and [ecosystem](ecosystem.md) covers importing observations from existing runners.
 
 ## Work through an agent interface
 
-Install the optional MCP dependency with `python -m pip install -e '.[mcp]'`. Then write the configuration for the installed interpreter and project directory:
-
 ```bash
+python -m pip install -e '.[mcp]'
 ai-eval connect --root . --output ai-evaluation.mcp.json
 ```
 
-Use that configuration in an MCP-compatible host; [connection guidance](connect.md) describes the available tools. Start with capabilities and benchmark metadata, then run or import the experiment, request a bounded summary, and inspect relevant samples in pages. Full results remain in the run directory. Python, CLI and MCP call the same execution and analysis functions.
+Load the configuration in an MCP host. Start with capabilities and the relevant method resource or research prompt. Run the experiment, save its analysis and request a summary; then read selected sample records or sections of the saved analysis. The same data are available through Python, CLI and portable reports.
 
-A useful research instruction supplies a decision and an experimental boundary:
+A useful instruction names a question, interventions and population:
 
-> Determine whether memory revision B improves project completion at a fixed tool budget. Use the same held-out project population and verifier for both systems, preserve project-level groups, and distinguish incomplete measurement from task failure. Report the paired effect, coverage, uncertainty, resource use and the cases that could change the interpretation. Propose the next experiment that would distinguish a memory benefit from task familiarity.
+> Determine whether query expansion and reranking improve retrieval independently or through an interaction. Run all four conditions on the same held-out queries, preserve source-level groups, and record the same resource measure throughout. Estimate the conditional effects and interaction, identify the observed quality–resource frontier, and examine which cases distinguish the systems. Use those observations to design the next experiment.
 
-For model judging, multimodal population statistics, adaptive benchmarks or long-horizon scientific outputs, first define the missing measurement or protocol described in [research methods](research.md). Integrate the corresponding implementation through an existing runner or extension point before claiming that the experiment has been performed.
+For a model judge, use [judge calibration](judges.md). For a new measurement or protocol, begin with its quantity, sampling unit and observable outcome in [research methods](research.md), then implement the execution or scoring operation it requires.

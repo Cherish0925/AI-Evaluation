@@ -1,0 +1,27 @@
+name: Optional external imports
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gym:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: evaluation
+      - uses: actions/checkout@v7
+        with:
+          repository: EnvFoundry/Verifiable-Agent-Gym
+          ref: 82b7100d88be2d1158d355802e6a864cde1e5684
+          path: gym
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/checkout@v7
+        with:
+          repository: EnvFoundry/Data-Engineering
+          ref: c6be7171b6adf643ea3418307d7ad4d168acf033
+          path: data
+      - run: python -m pip install -e ./evaluation -e ./gym -e ./data
+      - run: python evaluation/integration/gym_roundtrip.py --with-data
