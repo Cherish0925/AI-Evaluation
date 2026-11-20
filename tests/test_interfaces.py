@@ -217,7 +217,7 @@ class MCPTests(unittest.TestCase):
                             return result.structuredContent or json.loads(result.content[0].text)
 
                         discovery = await call("eval_capabilities")
-                        self.assertEqual(discovery["workspace"], str(root))
+                        self.assertEqual(discovery["workspace"], str(root.resolve()))
                         self.assertIn("ai_eval_interface_echo", discovery["plugins"]["ai_eval.targets"])
                         self.assertEqual((await call("eval_benchmark", benchmark="benchmark.json"))["samples"], 4)
                         for name in ("baseline", "candidate"):
