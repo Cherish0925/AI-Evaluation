@@ -205,6 +205,20 @@ def summarize(run_path: str | Path, metric: str, *, confidence: float = 0.95,
     return result
 
 
+def _comparison_metric(metric: dict) -> dict:
+    """Compare native measurement code independently of the package release."""
+    implementation = metric.get("implementation")
+    if not isinstance(implementation, dict) or implementation.get("kind") != "native":
+        return metric
+    code = implementation.get("module_sha256")
+    if (implementation.get("scorer") != metric.get("scorer") or
+            not isinstance(code, str) or len(code) != 64 or
+            any(character not in "0123456789abcdefABCDEF" for character in code)):
+        return metric
+    return {**metric, "implementation": {key: value for key, value in implementation.items()
+                                         if key != "version"}}
+
+
 def _compatible(left: dict, right: dict, metric: str) -> dict:
     left_manifest, right_manifest = left["manifest"], right["manifest"]
     left_benchmark, right_benchmark = left_manifest["benchmark"], right_manifest["benchmark"]
@@ -213,7 +227,7 @@ def _compatible(left: dict, right: dict, metric: str) -> dict:
     if left_benchmark["protocol"] != right_benchmark["protocol"]:
         raise ValueError("paired comparison requires the same execution protocol")
     descriptor = _metric(left_manifest, metric)
-    if descriptor != _metric(right_manifest, metric):
+    if _comparison_metric(descriptor) != _comparison_metric(_metric(right_manifest, metric)):
         raise ValueError("paired comparison requires the same metric definition")
     if left_benchmark.get("sample_sha256") != right_benchmark.get("sample_sha256"):
         raise ValueError("paired comparison requires the same sample content")
