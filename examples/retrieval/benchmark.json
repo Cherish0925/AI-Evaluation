@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "name": "retrieval-tutorial",
+  "revision": "1",
+  "description": "Authored predictions on six grouped retrieval cases for learning paired evaluation.",
+  "samples": "samples.jsonl",
+  "metrics": [
+    {"name": "recall", "scorer": "recall_at_k", "direction": "maximize", "params": {"k": 2}}
+  ],
+  "protocol": {"trials": 1, "seed": 17},
+  "metadata": {"origin": "authored-example", "purpose": "Demonstrate grouped comparison; no real retriever is evaluated."}
+}
