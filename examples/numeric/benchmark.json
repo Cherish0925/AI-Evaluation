@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "name": "physical-parameter-recovery",
+  "revision": "1",
+  "description": "Recover physical parameters by centered least squares from authored linearized observations.",
+  "samples": "samples.jsonl",
+  "metrics": [
+    {"name": "accuracy", "scorer": "numeric", "direction": "maximize", "params": {"abs_tol": 1e-10, "rel_tol": 1e-10}}
+  ],
+  "protocol": {"trials": 1, "seed": 17},
+  "metadata": {
+    "origin": "authored-physics-example",
+    "purpose": "Demonstrate structured numeric evaluation of an executed solver; no instrument or language model is used.",
+    "observations": "Controlled examples with known fitted parameters; selected residuals are orthogonal to the linear design.",
+    "method": "Fit y = slope*x + intercept, then recover the specified physical parameter."
+  }
+}

@@ -1,0 +1,6 @@
+{"id":"q0","input":{"query":"synthetic query 0"},"target":["doc-0","context-0"],"group":"topic-0","slices":{"variant":"direct"}}
+{"id":"q1","input":{"query":"synthetic query 1"},"target":["doc-1","context-0"],"group":"topic-0","slices":{"variant":"paraphrase"}}
+{"id":"q2","input":{"query":"synthetic query 2"},"target":["doc-2","context-1"],"group":"topic-1","slices":{"variant":"direct"}}
+{"id":"q3","input":{"query":"synthetic query 3"},"target":["doc-3","context-1"],"group":"topic-1","slices":{"variant":"paraphrase"}}
+{"id":"q4","input":{"query":"synthetic query 4"},"target":["doc-4","context-2"],"group":"topic-2","slices":{"variant":"direct"}}
+{"id":"q5","input":{"query":"synthetic query 5"},"target":["doc-5","context-2"],"group":"topic-2","slices":{"variant":"paraphrase"}}

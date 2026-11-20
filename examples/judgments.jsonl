@@ -1,0 +1,8 @@
+{"id":"document-1-a","group":"document-1","reference":"pass","judge":"pass","slices":{"domain":"science"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-1-b","group":"document-1","reference":"fail","judge":"pass","slices":{"domain":"science"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-2-a","group":"document-2","reference":"pass","judge":"pass","slices":{"domain":"software"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-2-b","group":"document-2","reference":"fail","judge":"fail","slices":{"domain":"software"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-3-a","group":"document-3","reference":"fail","judge":"fail","slices":{"domain":"science"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-3-b","group":"document-3","reference":"pass","judge":"fail","slices":{"domain":"science"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-4-a","group":"document-4","reference":"pass","judge":null,"slices":{"domain":"software"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}
+{"id":"document-4-b","group":"document-4","reference":null,"judge":"fail","slices":{"domain":"software"},"metadata":{"origin":"authored demonstration; no model or human study was run"}}

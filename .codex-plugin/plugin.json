@@ -1,0 +1,19 @@
+{
+  "name": "ai-evaluation",
+  "version": "0.1.0",
+  "description": "Benchmark design, reproducible evaluation and statistical comparison for AI systems.",
+  "author": {
+    "name": "EnvFoundry contributors"
+  },
+  "homepage": "https://github.com/EnvFoundry/AI-Evaluation",
+  "repository": "https://github.com/EnvFoundry/AI-Evaluation",
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./mcp.codex.json",
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "AI Evaluation",
+    "shortDescription": "Design benchmarks and compare AI systems",
+    "developerName": "EnvFoundry"
+  }
+}

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "envfoundry-ai-evaluation"
+version = "0.1.0"
+description = "Benchmark design, reproducible evaluation and statistical comparison for AI systems"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "EnvFoundry contributors"}]
+keywords = ["evaluation", "benchmark", "agents", "research", "mcp"]
+classifiers = ["Programming Language :: Python :: 3", "Topic :: Scientific/Engineering :: Artificial Intelligence"]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.29,<2"]
+dev = ["build>=1", "mcp>=1.29,<2"]
+
+[project.scripts]
+ai-eval = "ai_eval.cli:main"
+
+[project.urls]
+Repository = "https://github.com/EnvFoundry/AI-Evaluation"
+Documentation = "https://github.com/EnvFoundry/AI-Evaluation/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["src"]

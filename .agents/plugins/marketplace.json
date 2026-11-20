@@ -1,0 +1,19 @@
+{
+  "name": "ai-evaluation",
+  "interface": {
+    "displayName": "AI Evaluation"
+  },
+  "plugins": [
+    {
+      "name": "ai-evaluation",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

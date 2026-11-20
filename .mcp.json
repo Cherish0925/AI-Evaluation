@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ai-evaluation": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--no-project",
+        "--script",
+        "${CLAUDE_PLUGIN_ROOT}/server.py",
+        "serve"
+      ]
+    }
+  }
+}
